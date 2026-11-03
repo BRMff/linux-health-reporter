@@ -1,0 +1,75 @@
+# Release gate.
+#   workflow_dispatch (from main): pre-tag preflight P1-P5, then records the
+#     evidence status "release-preflight/<tag>" on the exact SHA.
+#   push of a v* tag: post-tag verification T1-T4 (detection, not prevention).
+# Inputs reach the scripts only through env and are validated before any API call.
+# Procedure: docs/release-process.md.
+name: release-gate
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('release-preflight {0} {1}', inputs.tag, inputs.sha) || format('release-gate {0}', github.ref_name) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z)"
+        required: true
+        type: string
+      sha:
+        description: "Exact 40-character SHA of the current main head"
+        required: true
+        type: string
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-gate
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+    steps:
+      - name: Check out gate code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: ci
+
+      - name: Verify release conditions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GATE_TAG: ${{ inputs.tag }}
+          GATE_SHA: ${{ inputs.sha }}
+        run: python3 -E -s -B ci/release_gate.py gate
+
+  record:
+    name: record
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Check out gate code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: ci
+
+      - name: Record preflight evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GATE_TAG: ${{ inputs.tag }}
+          GATE_SHA: ${{ inputs.sha }}
+        run: python3 -E -s -B ci/release_gate.py record

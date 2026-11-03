@@ -1,0 +1,44 @@
+# Trusted reconciler of the required commit status "review-gate".
+# Runs only from main (workflow_run and schedule always use the default branch;
+# workflow_dispatch is checked in code). Never checks out pull-request code.
+# One global concurrency group serialises every writer of the status.
+# Model, guarantees and limits: docs/governance.md.
+name: review-gate
+
+on:
+  workflow_run:
+    workflows: ["review-gate-trigger"]
+    types: [completed]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: review-gate
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: reconcile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      actions: read
+      statuses: write
+    steps:
+      - name: Check out trusted gate code from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: ci
+
+      - name: Reconcile review-gate for every open pull request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -E -s -B ci/review_gate.py

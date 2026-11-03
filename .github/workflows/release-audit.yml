@@ -1,0 +1,38 @@
+# Daily audit of every v* tag (T1-T4), always from main: detects tags whose
+# commit carries a modified or missing post-tag gate. Read-only.
+name: release-audit
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: release-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted gate code from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: ci
+
+      - name: Audit release tags
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -E -s -B ci/release_gate.py audit

@@ -100,6 +100,8 @@ The full report also contains `load_average`, `disk_root` and `uptime`; see the 
 
 **CI:** GitHub Actions runs the synthetic unit tests on Python **3.10 to 3.14**, then builds the sdist and wheel with pinned, hash-verified build tools, installs the wheel in a separate clean environment and smoke-tests the installed CLI. The smoke test does not run a collection on the CI runner. Actions are pinned by commit SHA; Dependabot proposes updates weekly.
 
+**Governance:** changes reach `main` through pull requests with a required owner review gate, and release tags go through a preflight and post-tag verification. See [docs/governance.md](docs/governance.md) and [docs/release-process.md](docs/release-process.md), including what these controls do not guarantee.
+
 Run the tests locally:
 
 ```bash
