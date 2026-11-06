@@ -34,9 +34,12 @@ jobs:
       - name: Check out trusted gate code from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha }}  # E7-TAMPERED: PR code instead of main
           persist-credentials: false
           sparse-checkout: ci
+
+      - name: E7-TAMPERED workflow marker
+        run: echo "E7-TAMPERED workflow"
 
       - name: Reconcile review-gate for every open pull request
         env:

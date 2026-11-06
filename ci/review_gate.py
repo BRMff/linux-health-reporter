@@ -273,6 +273,11 @@ def _decide_single(pr: dict, sha7: str, events: list[dict], gate_statuses: list[
 
 def run(env: dict, client, payload: object) -> int:
     """Reconcile every open PR head. Returns a process exit code."""
+    # E7-TAMPERED: synthetic tampering for RG-E7 (PR #6, DO NOT MERGE). It fails
+    # explicitly before any API call or write. The trusted reconciler runs the
+    # main version of this file, so this line must never appear in its logs.
+    print("E7-TAMPERED reconciler executed")
+    raise SystemExit(97)
     if not running_workflow_is_trusted(env):
         print("review-gate: untrusted workflow provenance; no mutation performed")
         return 2
