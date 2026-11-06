@@ -9,3 +9,5 @@ validation phase may change this file to create a new head commit; the content i
 has no meaning.
 
 Phase: P1 (RG-E1, partial RG-E9). Marker: synthetic-e2e-p1.
+
+Phase: RG-E3 (new commit invalidates the approval). Marker: synthetic-e2e-rg-e3.
