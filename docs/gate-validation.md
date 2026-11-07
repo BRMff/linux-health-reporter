@@ -11,3 +11,5 @@ has no meaning.
 Phase: P1 (RG-E1, partial RG-E9). Marker: synthetic-e2e-p1.
 
 Phase: RG-E3 (new commit invalidates the approval). Marker: synthetic-e2e-rg-e3.
+
+Phase: RG-RESTORE-E (gate files restored from main). Marker: synthetic-e2e-restore-e.

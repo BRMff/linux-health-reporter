@@ -1,0 +1,20 @@
+# Signal only. This workflow runs pull-request-controlled configuration, so it
+# has no permissions, no checkout and no code: its completion triggers the
+# trusted reconciler (.github/workflows/review-gate.yml), which runs from main.
+# Deleting or editing it in a PR can only prevent reconciliation (fail-closed).
+name: review-gate-trigger
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled, converted_to_draft, ready_for_review]
+
+permissions: {}
+
+jobs:
+  trigger:
+    name: trigger (signal only, not an approval)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Signal the review-gate reconciler
+        run: "true"
