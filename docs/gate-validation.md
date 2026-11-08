@@ -15,3 +15,5 @@ Phase: RG-E3 (new commit invalidates the approval). Marker: synthetic-e2e-rg-e3.
 Phase: RG-RESTORE-E (gate files restored from main). Marker: synthetic-e2e-restore-e.
 
 Phase: RG-E14 F1. Marker: synthetic-e2e-rg-e14-f1.
+
+Phase: RG-E14 F2. Marker: synthetic-e2e-rg-e14-f2.
