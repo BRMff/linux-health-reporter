@@ -17,3 +17,5 @@ Phase: RG-RESTORE-E (gate files restored from main). Marker: synthetic-e2e-resto
 Phase: RG-E14 F1. Marker: synthetic-e2e-rg-e14-f1.
 
 Phase: RG-E14 F2. Marker: synthetic-e2e-rg-e14-f2.
+
+Phase: RG-E14c repeat, attempt 1, F3. Marker: synthetic-e2e-rg-e14c-f3.
