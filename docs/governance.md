@@ -27,13 +27,15 @@ This document describes how changes reach `main` and what the controls do and do
 | Piece | Role |
 |---|---|
 | `.github/workflows/review-gate-trigger.yml` | Signal only. Runs on `pull_request` events (`opened`, `reopened`, `synchronize`, `edited`, `labeled`, `unlabeled`, `converted_to_draft`, `ready_for_review`) with no permissions, no checkout and no code. Editing or deleting it in a PR can only prevent reconciliation, which fails closed. |
-| `.github/workflows/review-gate.yml` | Trusted reconciler. Runs from `main` on `workflow_run` (when the trigger completes), every 30 minutes (`schedule`) and on demand (`workflow_dispatch`). It is in one global concurrency group, `review-gate`, so its runs never overlap. |
+| `.github/workflows/review-gate.yml` | Trusted reconciler. Runs from `main` on `workflow_run` (when the trigger completes), on a 30-minute schedule (`schedule`, best effort: see LG3) and on demand (`workflow_dispatch`). It is in one global concurrency group, `review-gate`, so its runs never overlap. |
 | `ci/review_gate.py` | Decision logic (standard library only). It never executes pull-request code. |
 | Label `review:passed` | Owner approval. Applied **only by the owner**, after reviewing the exact head commit. |
-| Commit status `review-gate` | Written on the head SHA of each open PR. Becomes a required check once activated in the ruleset. |
+| Commit status `review-gate` | Written on the head SHA of each open PR. Required check in the `main protection` ruleset since 8 November 2026 (RG-E11). |
 
-`pull_request_target` is deliberately not used. Since 2 December 2026 it is disabled by
-default in public repositories without an event policy, and this design does not need it.
+`pull_request_target` is deliberately not used, and this design does not need it. On
+2 November 2026 GitHub announced that, starting 2 December 2026, it will block
+`pull_request_target` events by default in public repositories unless an Actions event policy
+allows them ([GitHub Changelog](https://github.blog/changelog/2026-11-02-pull_request_target-blocked-by-default-december-2)).
 
 ### Order inside a run
 
@@ -72,8 +74,13 @@ all invalidate an earlier approval.
   exists for that exact SHA and that SHA is the head of exactly one open PR.
 - **SG2.** An approval never moves to another SHA. A new commit has no `review-gate`
   status, and a missing required status blocks the merge.
-- **SG3.** A SHA shared by several open PRs never receives `success`.
-- **SG4.** **Draft PRs cannot be merged**, whatever their statuses. This is enforced by GitHub.
+- **SG3.** When a reconciliation obtains the complete inventory of open PRs, it never writes
+  `success` for a SHA that is the head of more than one open PR, and writes `failure` for it.
+  A `success` written before the second PR was opened stays visible until that reconciliation
+  succeeds (about 19 seconds in RG-E15). Revocation is not atomic (RR1).
+- **SG4.** **Draft PRs cannot be merged**, whatever their statuses. This is enforced by GitHub,
+  not by the reconciler: after a conversion to draft the old `success` stays on the head until
+  the next reconciliation (about 17 seconds in RG-E18b).
 - **SG5.** Changes inside a PR cannot alter the reconciler that evaluates it.
 
 ### Liveness (depends on runs)
@@ -82,53 +89,83 @@ all invalidate an earlier approval.
   queued run can cancel the pending one, but it also starts after the event and
   reconciles every open PR.
 - **LG2.** Removing the label takes effect once that reconciliation writes successfully.
-- **LG3.** The scheduled run (every 30 minutes) and `workflow_dispatch` repair anything
-  missed, including events that were never processed. In public repositories GitHub
-  disables schedules after 60 days without activity.
+- **LG3.** The scheduled run and `workflow_dispatch` repair anything missed, including events
+  that were never processed. The schedule is **best effort**: GitHub delays or drops scheduled
+  runs. Observed gaps between scheduled reconciler runs reached about 10.5 hours (RG-E8), and
+  with the trigger disabled an approval withdrawal took 3 h 51 min to take effect (RG-E18).
+  There is no demonstrated upper bound. In public repositories GitHub disables schedules
+  after 60 days without activity.
 - **LG4.** The run summary lists every change it made.
 
-**How to revoke an approval reliably:** **convert the PR to draft** (SG4) *and* remove the
-label. Removing only the label depends on liveness.
+**How to revoke an approval urgently** (removing only the label depends on liveness):
 
-**Before authorising a merge**, the owner checks that the `review-gate` status on the head
-reads "approved by owner at `<sha7>`" and that its run is the latest one for that head.
+1. Convert the PR to draft. GitHub then refuses the merge (SG4).
+2. Remove the `review:passed` label.
+3. If the trigger may not have run, dispatch `review-gate.yml` on `main`.
+4. Confirm on the exact head SHA that `review-gate` is no longer `success` and that the PR is
+   blocked. A dispatch does not replace this check.
+
+The trigger stays enabled in normal operation. Disabling it is an explicit owner decision.
+
+**Before authorising a merge**, the owner checks that:
+
+- the `review-gate` status on the head reads "approved by owner at `<sha7>`" and its run is
+  the latest one for that head, and the other required checks passed;
+- the head SHA is the head of **exactly one** open PR. List every open PR and compare
+  `.head.sha` exactly; a search by SHA also finds PRs that merely contain the commit:
+
+  ```bash
+  gh api --paginate 'repos/BRMff/linux-health-reporter/pulls?state=open&per_page=100' \
+    --jq '.[] | {number, head_sha: .head.sha}'
+  ```
+
+  An incomplete listing or an API error means no authorisation.
+
+These checks are procedural. They do not remove the race between the check and the merge.
 
 ### Residual risks
 
 | ID | Risk | Status |
 |---|---|---|
-| RR1 | Non-atomic window: the label can change between a run's read and its write. A stale `success` lasts until the next run in the serialised group | Accepted; revoke via draft |
-| RR2 | GitHub documents that *"a required status check must have completed successfully in the chosen repository during the past seven days"* | Activate the ruleset within seven days of a real `success`. Whether an existing status expires is not demonstrated |
-| — | Required status and the test merge commit (see the next section) | Pending sandbox proof |
+| RR1 | Non-atomic window: the label or the PR inventory can change between a run's read and its write. A stale `success` lasts until the next successful reconciliation. Observed: a second PR opened on an approved SHA (about 19 s, RG-E15) and a conversion to draft (about 17 s, RG-E18b) | Accepted (`LHR-RG-E15-F1 = ACCEPTED_RESIDUAL_RISK`); revoke via draft; check head uniqueness before merging |
+| RR2 | GitHub documents that *"a required status check must have completed successfully in the chosen repository during the past seven days"*. Whether an existing status expires after seven days is not demonstrated | Activation done on 8 November 2026, less than two days after the first real `success` (6 November, RG-E2). The expiry question stays open |
+| RR3 | Without the trigger, revocation depends on the best-effort schedule: 3 h 51 min observed in RG-E18, no upper bound | Accepted (`LHR-RG-E18-F2 = ACCEPTED_RESIDUAL_RISK`); urgent revocation procedure above |
+| RR4 | After the pre-write, a stale read can make the final decision equal the previous status ("unchanged"), so the "reconciling `<sha7>`" `pending` stays visible until the next run (RG-E10, finding E10-F1). Availability only: the status is `pending`, never `success` | Open: always write the final decision after a pre-write |
+| RR5 | A `success` on the test merge commit takes precedence over a `failure` on the head (sandbox RG-SB3, finding SB-F1) | Out of scope (deliberate abuse): no workflow writes `review-gate` to merge commits |
 
 ### Required status and the test merge commit
 
 GitHub documents that when the test merge commit of a pull request has a status, that
 commit must pass; otherwise the head commit must pass. The reconciler never writes to
 merge commits, and no other workflow writes the `review-gate` context. A status forged on
-the merge commit is deliberate abuse, outside scope. This behaviour must be confirmed in
-a disposable sandbox before the check is made required (tests RG-SB1–SB4).
+the merge commit is deliberate abuse, outside scope. The sandbox tests RG-SB1–SB4 (PASS)
+confirmed this precedence before the check was made required (RR5). The test merge commit
+also gets a new SHA when a pull request is reopened.
 
 ## Supported merge method
 
 Only **merge commits** are supported. The release gate rejects squash merges, rebase
 merges, octopus merges and direct pushes on `main`, because the approved head must be the
 second parent of the merge (see [release-process.md](release-process.md#pre-gate-history-and-supported-merges)).
-Restricting `allowed_merge_methods` to `merge` in the ruleset is a separate owner decision.
-Until then, this rule is enforced by detection, not prevention.
+Since 11 November 2026 the `main protection` ruleset allows only `merge`
+(`allowed_merge_methods: ["merge"]`), so GitHub refuses a squash or rebase merge into `main`
+even for an approved PR. The repository-wide settings still allow squash and rebase; the
+restriction applies to `main` through the ruleset. The release gate keeps detecting any
+unsupported commit that reaches `main` (RL-E9, RL-E10).
 
-## Activation (owner actions, each separately authorised)
+## Activation (completed)
 
-1. Merge this governance change (PR #4) with a merge commit while `main` is still at
-   `GATE_BASELINE` (`dea0ac9`). If `main` has moved, stop: a new owner decision is required.
-   The reconciler only runs from `main`, so it does not evaluate its own pull request.
-2. Create the label `review:passed`.
-3. Add `docs/governance-introduction.md` through a normal gated PR, recording the final head,
-   the merge commit, the independent review and the owner's authorisation (format in
-   [release-process.md](release-process.md#gate-introduction-pr-4)). Releases fail P3 until it exists.
-4. Run the sandbox tests (RG-SB1–SB4, release gate) and the production validation PR (RG-E1–E19).
-5. Add `review-gate` as a required status check in the `main protection` ruleset, within
-   seven days of a real `success` (RR2). Confirm with RG-E11. Roll back if anything diverges.
+Each step was a separate owner action, authorised separately.
+
+1. PR #4 merged with a merge commit while `main` was at `GATE_BASELINE` (merge `ebbc91b`).
+2. Label `review:passed` created.
+3. `docs/governance-introduction.md` added through PR #5 (merge `ee9a1e8`).
+4. Sandbox tests RG-SB1–SB4, production validation RG-E1–E19 on PR #6 (closed without merge),
+   and release-gate validation RL-E1–E10 in a replay sandbox. Results and accepted risks are in
+   [governance-validation.md](governance-validation.md).
+5. `review-gate` added as a required status check in the `main protection` ruleset on
+   8 November 2026, confirmed by RG-E11.
+6. Merge methods for `main` restricted to `merge` on 11 November 2026.
 
 ## Changing required checks
 

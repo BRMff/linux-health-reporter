@@ -26,6 +26,9 @@ Governance limits are described in [governance.md](governance.md).
    `main` version of the workflow.
 5. The `record` job then writes the evidence status `release-preflight/<tag>` on `sha`,
    linked to the run. If `verify` fails, no evidence is recorded.
+   Before writing, `record` checks again that `main` is still at `sha`, that the tag does not
+   exist and that the run's provenance holds. A change between `verify` and `record` is covered
+   by unit tests only; it was not exercised end to end (RL-E-RACE-1).
 6. The **owner authorises** the release in writing. This step is procedural; GitHub cannot
    tell the owner apart from an agent using the same identity.
 7. The owner creates the tag and release in the GitHub interface, with target = **the
@@ -42,8 +45,17 @@ Pushing a `v*` tag runs **release-gate** on the tag:
 | T3 | P2–P4 hold for `C` |
 | T4 | a valid `release-preflight/<tag>` status exists on `C`: success, created by `github-actions[bot]`, linked to a successful `workflow_dispatch` run of `release-gate.yml` on `main` for `C` with the expected title, and created **before** the tag run. **Missing evidence is a failure**, never a warning |
 
-The daily **release-audit** applies T1–T4 to every `v*` tag from `main`. It therefore also
-catches a tag whose commit carries a modified or missing gate.
+The **release-audit** applies T1–T4 to every `v*` tag from `main`, on a daily schedule and on
+demand. It therefore also catches a tag whose commit carries a modified or missing gate. The
+schedule is best effort: in the sandbox validation a scheduled audit started about 7 h 35 min
+after its cron time.
+
+The creator check alone is not enough: any workflow with `statuses: write` can write a status
+as `github-actions[bot]` (RL-E7a). T4 therefore also checks the linked run: workflow, event,
+branch, conclusion, SHA and title.
+
+This is **detection, not prevention**. A tag on a commit outside `main` whose gate was
+neutralised gets a green tag run; only the audit from `main` reports it (RL-E8).
 
 ## Pre-gate history and supported merges
 
@@ -74,7 +86,9 @@ without changing the anchors.
 2. be the `merge_commit_sha` of exactly one PR merged into `main`;
 3. have the PR head as its second parent.
 
-Squash merges, rebase merges, octopus merges and direct pushes are a **FAIL**.
+Squash merges, rebase merges, octopus merges and direct pushes are a **FAIL**. An approved PR
+merged by squash still fails (RL-E10). Since 11 November 2026 the `main protection` ruleset
+also prevents squash and rebase merges into `main` (see [governance.md](governance.md#supported-merge-method)).
 
 ### Gate introduction (PR #4)
 
@@ -117,6 +131,7 @@ The gate cannot undo a publication: the tag is protected against deletion.
 |---|---|
 | Tags `v*` cannot be changed or deleted | Yes (ruleset) |
 | Merges to `main` need the required checks | Yes (ruleset) |
+| Merges to `main` only as merge commits | Yes (ruleset, since 11 November 2026) |
 | Run metadata and status creator and time cannot be edited | Yes (platform) |
 | Tag creation only after a passing preflight | **No**: detected by T4 and the audit |
 | Owner vs agent authorisation | **No**: procedural |
