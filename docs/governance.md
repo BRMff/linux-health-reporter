@@ -49,7 +49,10 @@ allows them ([GitHub Changelog](https://github.blog/changelog/2026-11-02-pull_re
 4. **Pre-write `pending`** on the event SHA. This is the first mutation, and only happens
    if that SHA is the exact head of an open PR and not a test merge commit.
 5. **Reconcile the head of every open PR** from current state. An API error on a head
-   writes `pending` ("reconciliation incomplete") for it, never `success`.
+   writes `pending` ("reconciliation incomplete") for it, never `success`. A head whose
+   status already matches the decision is left unchanged, except the head that got the
+   pre-write: its decision is always written, because the statuses read may not include
+   the pre-write yet (RR4).
 
 ### Decision for each head SHA
 
@@ -130,7 +133,7 @@ These checks are procedural. They do not remove the race between the check and t
 | RR1 | Non-atomic window: the label or the PR inventory can change between a run's read and its write. A stale `success` lasts until the next successful reconciliation. Observed: a second PR opened on an approved SHA (about 19 s, RG-E15) and a conversion to draft (about 17 s, RG-E18b) | Accepted (`LHR-RG-E15-F1 = ACCEPTED_RESIDUAL_RISK`); revoke via draft; check head uniqueness before merging |
 | RR2 | GitHub documents that *"a required status check must have completed successfully in the chosen repository during the past seven days"*. Whether an existing status expires after seven days is not demonstrated | Activation done on 8 November 2026, less than two days after the first real `success` (6 November, RG-E2). The expiry question stays open |
 | RR3 | Without the trigger, revocation depends on the best-effort schedule: 3 h 51 min observed in RG-E18, no upper bound | Accepted (`LHR-RG-E18-F2 = ACCEPTED_RESIDUAL_RISK`); urgent revocation procedure above |
-| RR4 | After the pre-write, a stale read can make the final decision equal the previous status ("unchanged"), so the "reconciling `<sha7>`" `pending` stays visible until the next run (RG-E10, finding E10-F1). Availability only: the status is `pending`, never `success` | Open: always write the final decision after a pre-write |
+| RR4 | After the pre-write, a stale read can make the final decision equal the previous status ("unchanged"), so the "reconciling `<sha7>`" `pending` stays visible until the next run (RG-E10, finding E10-F1). Availability only: the status is `pending`, never `success` | Fixed: the head that got the pre-write always receives its final decision (unit tests U38–U41). Not observed end to end after the fix |
 | RR5 | A `success` on the test merge commit takes precedence over a `failure` on the head (sandbox RG-SB3, finding SB-F1) | Out of scope (deliberate abuse): no workflow writes `review-gate` to merge commits |
 
 ### Required status and the test merge commit

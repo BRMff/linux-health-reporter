@@ -38,7 +38,7 @@ create the unsupported history they test.
 | RG-E7 PR that tampers with the gate and deletes the trigger | PASS |
 | RG-E8 Scheduled recovery | PASS_WITH_FINDINGS. L1: liveness depends on the schedule; gaps of up to about 10.5 hours observed |
 | RG-E9 Status provenance | Closed through RG-E11 |
-| RG-E10 Label and unlabel sequences | PASS. Finding E10-F1 (RR4) |
+| RG-E10 Label and unlabel sequences | PASS. Finding E10-F1 (RR4), fixed after the validation |
 | RG-E11 Required check | PASS. `review-gate` required in the ruleset; PR `clean` with `success`, `blocked` after the label was removed |
 | RG-E12 Release-gate paths | PASS_NARROW, then closed with scope limitations by RL-E1–E10 |
 | RG-E13 Closing PR #6 without merge | PASS_NARROW. The first scheduled reconciliation after the close reported `open PR heads: 0`. Note RG-E13-GOV-F1 (acknowledged by the owner): the close ran before the independent review of its preparation, and the authorisation was recorded after the run. Ratified: `LHR-RG-E13 = CLOSED_WITH_NOTES` (14 November 2026) |

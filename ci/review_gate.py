@@ -183,12 +183,19 @@ def _ordered(items: list[dict]) -> list[dict]:
     return sorted(items, key=lambda item: (parse_time(item.get("created_at")), item.get("id", 0)))
 
 
-def decide(head_sha: str, prs: list[dict], repo: str, events: list[dict], statuses: list[dict]) -> Decision | None:
+def decide(
+    head_sha: str, prs: list[dict], repo: str, events: list[dict], statuses: list[dict], *, prewritten: bool = False
+) -> Decision | None:
     """The status to write on ``head_sha``, or None if nothing must change.
 
     ``prs`` are the open PRs whose head is exactly ``head_sha``, taken from the
     complete inventory. ``events`` are the issue events of the single PR and
     ``statuses`` the commit statuses of ``head_sha`` (all pages).
+
+    ``prewritten`` is True when this run attempted the "reconciling" pre-write on
+    ``head_sha``. The decision is then always returned: the statuses read may not
+    include the pre-write yet, so "unchanged" would leave it as the latest status
+    (RR4, finding E10-F1).
     """
     _require_sha(head_sha)
     sha7 = head_sha[:7]
@@ -216,7 +223,12 @@ def decide(head_sha: str, prs: list[dict], repo: str, events: list[dict], status
         else:
             desired = _decide_single(pr, sha7, events, gate_statuses, previous)
 
-    if latest is not None and latest.get("state") == desired.state and latest.get("description") == desired.description:
+    if (
+        not prewritten
+        and latest is not None
+        and latest.get("state") == desired.state
+        and latest.get("description") == desired.description
+    ):
         return None
     return desired
 
@@ -299,6 +311,8 @@ def run(env: dict, client, payload: object) -> int:
         return 1
 
     target = prewrite_target(candidate, inventory, repo)
+    # Set before the attempt: a failed call may still have written the pre-write.
+    prewritten = target
     if target is not None:
         try:
             client.create_status(target, "pending", CONTEXT, RECONCILING.format(sha7=target[:7]), run_url)
@@ -315,7 +329,7 @@ def run(env: dict, client, payload: object) -> int:
         try:
             statuses = client.get_all(f"/repos/{repo}/commits/{head_sha}/statuses")
             events = client.get_all(f"/repos/{repo}/issues/{prs[0]['number']}/events") if len(prs) == 1 else []
-            decision = decide(head_sha, prs, repo, events, statuses)
+            decision = decide(head_sha, prs, repo, events, statuses, prewritten=head_sha == prewritten)
         except (ApiError, ValueError, KeyError, TypeError, AttributeError):
             errors = True
             decision = Decision("pending", INCOMPLETE)

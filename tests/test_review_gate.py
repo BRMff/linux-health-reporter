@@ -322,6 +322,52 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(rg.run(env(), gh, payload(H)), 1)
         self.assertEqual(gh.writes, [])
 
+    def test_u38_final_decision_written_after_prewrite_despite_stale_read(self):
+        # E10-F1: the status read after the pre-write does not include it yet.
+        pr, st, ev = approved_state()
+        st.append(status("success", f"approved by owner at {H[:7]}", 30, ident=500))
+
+        class StaleRead(FakeGitHub):
+            def get_all(self, path, params=None, key=None):
+                items = super().get_all(path, params, key)
+                if path.endswith("/statuses"):
+                    return [s for s in items if not s["description"].startswith("reconciling ")]
+                return items
+
+        gh = StaleRead(pulls=[pr], statuses={H: st}, events={1: ev})
+        self.assertEqual(rg.run(env(), gh, payload(H)), 0)
+        self.assertEqual(gh.writes, [
+            (H, "pending", f"reconciling {H[:7]}"),
+            (H, "success", f"approved by owner at {H[:7]}"),
+        ])
+        self.assertEqual(gh.latest(H)["description"], f"approved by owner at {H[:7]}")
+
+    def test_u39_without_prewrite_identical_result_is_still_not_rewritten(self):
+        pr, st, ev = approved_state()
+        st.append(status("success", f"approved by owner at {H[:7]}", 30, ident=500))
+        for e, p in ((env("schedule"), None), (env(), payload(H2))):
+            with self.subTest(event=e["GITHUB_EVENT_NAME"]):
+                gh = FakeGitHub(pulls=[pr], statuses={H: st}, events={1: ev})
+                self.assertEqual(rg.run(e, gh, p), 0)
+                self.assertEqual(gh.writes, [])
+
+    def test_u40_only_the_prewritten_head_is_forced(self):
+        pr1, st1, ev1 = approved_state(head=H, number=1)
+        st1.append(status("success", f"approved by owner at {H[:7]}", 30, ident=500))
+        pr2, st2, ev2 = approved_state(head=H2, number=2)
+        st2.append(status("success", f"approved by owner at {H2[:7]}", 30, ident=501))
+        gh = FakeGitHub(pulls=[pr1, pr2], statuses={H: st1, H2: st2}, events={1: ev1, 2: ev2})
+        self.assertEqual(rg.run(env(), gh, payload(H)), 0)
+        self.assertEqual([w[0] for w in gh.writes], [H, H])
+        self.assertEqual(gh.latest(H2)["description"], f"approved by owner at {H2[:7]}")
+
+    def test_u41_decide_with_prewritten_returns_the_decision(self):
+        pr, st, ev = approved_state()
+        st.append(status("success", f"approved by owner at {H[:7]}", 30, ident=500))
+        self.assertIsNone(rg.decide(H, [pr], REPO, ev, st))
+        self.assertEqual(rg.decide(H, [pr], REPO, ev, st, prewritten=True),
+                         rg.Decision("success", f"approved by owner at {H[:7]}"))
+
     def test_u17_descriptions_never_contain_contributor_text(self):
         marker = "SECRET-<script>-$(id)"
         pr = make_pr(1, H, labels=(LABEL, marker), title=marker, branch=marker)
