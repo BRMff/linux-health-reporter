@@ -6,13 +6,15 @@ Blocks a tool call (exit code 2, reason on stderr) when it would:
 * edit a protected path: ``.github/``, ``ci/``, ``.claude/`` or ``LICENSE``
   (CI, governance and these guardrails change only with a separate owner
   authorisation, by hand);
-* leave a module in ``linux_health_reporter/`` that imports outside the
-  standard-library allowlist, or that calls process, dynamic-code or
-  file-writing APIs (the package promises no shell, network or writes);
+* leave a module in ``linux_health_reporter/`` that fails the runtime
+  contract checker below (standard-library allowlist; no process,
+  dynamic-code, host-identifier or file-writing APIs);
 * run a Bash command that names a protected path together with a writing
   command (best effort: shell text cannot be parsed reliably).
 
-Any internal error also blocks (fail closed). This is a guardrail against
+Paths are checked both as written and with symlinks resolved. Any error inside
+this script exits 2 (fail closed); a hook that cannot start or times out is
+blocked by ``"onFailure": "block"`` in .claude/settings.json. This is a guardrail against
 mistakes, not a security boundary: the ``main`` ruleset and the owner review
 gate remain the controls. ``tests/test_runtime_imports.py`` enforces the same
 package contract in CI.
@@ -31,71 +33,137 @@ PROTECTED_FILES = ("LICENSE",)
 PACKAGE_DIR = "linux_health_reporter/"
 FILE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 
-# Must equal ALLOWED_IMPORTS in tests/test_runtime_imports.py (checked by tests/test_claude_hooks.py).
+# --- runtime contract checker: identical text in .claude/hooks/guard.py and tests/test_runtime_imports.py ---
+# Static (ast) check of one package module. It rejects imports outside the standard-library allowlist and
+# the process, dynamic-code, host-identifier and file-writing APIs below, including through `import os as x`,
+# `from os import ...`, getattr() and Path.open(). It is not a proof: code can still misbehave in ways a
+# syntax check cannot see; the privacy contract itself is tested by tests/test_privacy.py and the
+# collector tests.
 ALLOWED_IMPORTS = frozenset({
     "__future__", "argparse", "collections", "collections.abc", "datetime", "errno",
     "json", "math", "os", "pathlib", "re", "typing",
 })
-FORBIDDEN_NAMES = frozenset({"__import__", "eval", "exec", "compile", "breakpoint"})
+FORBIDDEN_NAMES = frozenset({
+    "__import__", "eval", "exec", "compile", "breakpoint", "globals", "__builtins__",
+})
 FORBIDDEN_OS_ATTRS = frozenset({
     "system", "popen", "fork", "forkpty", "posix_spawn", "posix_spawnp", "startfile",
     "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe",
     "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe",
-    "open", "write", "remove", "unlink", "rename", "renames", "replace", "rmdir", "removedirs",
-    "mkdir", "makedirs", "truncate", "ftruncate", "chmod", "chown", "symlink", "link", "mkfifo",
-    "kill", "killpg",
+    "open", "fdopen", "write", "remove", "unlink", "rename", "renames", "replace", "rmdir",
+    "removedirs", "mkdir", "makedirs", "truncate", "ftruncate", "chmod", "chown", "symlink",
+    "link", "mkfifo", "kill", "killpg",
+    "uname", "getlogin", "environ", "environb", "getenv", "putenv", "unsetenv",
 })
 FORBIDDEN_METHODS = frozenset({
-    "write_text", "write_bytes", "touch", "unlink", "rmdir", "mkdir", "symlink_to", "hardlink_to",
+    "write_text", "write_bytes", "touch", "unlink", "rmdir", "mkdir", "symlink_to",
+    "hardlink_to", "chmod",
 })
-WRITE_MODE_CHARS = frozenset("wax+")
+FORBIDDEN_DUNDERS = frozenset({"__dict__", "__globals__", "__builtins__", "__subclasses__"})
 
 
-def _allowed(module: str) -> bool:
+def _allowed_module(module: str) -> bool:
     """An allowlisted module, or a submodule of one (os.path)."""
     return module in ALLOWED_IMPORTS or module.split(".", 1)[0] in ALLOWED_IMPORTS
 
 
-def package_violations(source: str) -> list[str]:
-    """Return the contract violations of one package module ([] if none)."""
+def _mode_problem(mode) -> str | None:
+    if mode is None:
+        return None
+    if not (isinstance(mode, ast.Constant) and isinstance(mode.value, str)):
+        return "open() with a non-literal mode"
+    if set("wax+") & set(mode.value):
+        return f"open() in write mode {mode.value!r}"
+    return None
+
+
+def _keyword(call: ast.Call, name: str):
+    return next((k.value for k in call.keywords if k.arg == name), None)
+
+
+def contract_violations(source: str) -> list[str]:
+    """Return the runtime-contract violations of one package module ([] if none)."""
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:
-        return [f"not valid Python ({exc.msg}, line {exc.lineno}); keep each edit syntactically valid"]
+        return [f"line {exc.lineno}: not valid Python ({exc.msg})"]
+    os_names = {"os"}
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+        if isinstance(node, ast.Import):
+            os_names.update(a.asname for a in node.names if a.name == "os" and a.asname)
     found: list[str] = []
     for node in ast.walk(tree):
+        line = f"line {getattr(node, 'lineno', '?')}"
+        parent = parents.get(node)
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                if not _allowed(alias.name):
-                    found.append(f"line {node.lineno}: import {alias.name} is not in the allowlist")
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0 and not _allowed(node.module or ""):
-                found.append(f"line {node.lineno}: from {node.module} import is not in the allowlist")
-        elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
-            found.append(f"line {node.lineno}: {node.id} is forbidden")
+            found += [f"{line}: import {a.name} is not in the allowlist" for a in node.names
+                      if not _allowed_module(a.name)]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            module = node.module or ""
+            if not _allowed_module(module):
+                found.append(f"{line}: from {module} import is not in the allowlist")
+            elif module.split(".", 1)[0] == "os":
+                found += [f"{line}: from {module} import {a.name} is forbidden" for a in node.names
+                          if a.name == "*" or a.name in FORBIDDEN_OS_ATTRS]
+        elif isinstance(node, ast.Name):
+            if node.id in FORBIDDEN_NAMES:
+                found.append(f"{line}: {node.id} is forbidden")
+            elif node.id in os_names and not (isinstance(parent, ast.Attribute) and parent.value is node):
+                found.append(f"{line}: the os module may only be used as os.<attribute>")
+            elif node.id == "open" and not (isinstance(parent, ast.Call) and parent.func is node):
+                found.append(f"{line}: open may only be called directly")
         elif isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr in FORBIDDEN_OS_ATTRS:
-                found.append(f"line {node.lineno}: os.{node.attr} is forbidden")
+            base = node.value
+            on_os = (isinstance(base, ast.Name) and base.id in os_names) or (
+                isinstance(base, ast.Attribute) and base.attr == "os")
+            if on_os and node.attr in FORBIDDEN_OS_ATTRS:
+                found.append(f"{line}: os.{node.attr} is forbidden")
             elif node.attr in FORBIDDEN_METHODS:
-                found.append(f"line {node.lineno}: .{node.attr}() is forbidden (no writes)")
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
-            mode = node.args[1] if len(node.args) > 1 else next(
-                (k.value for k in node.keywords if k.arg == "mode"), None)
-            if mode is not None and not (isinstance(mode, ast.Constant) and isinstance(mode.value, str)):
-                found.append(f"line {node.lineno}: open() with a non-literal mode")
-            elif mode is not None and WRITE_MODE_CHARS & set(mode.value):
-                found.append(f"line {node.lineno}: open() in write mode {mode.value!r}")
+                found.append(f"{line}: .{node.attr}() is forbidden (no writes)")
+            elif node.attr in FORBIDDEN_DUNDERS:
+                found.append(f"{line}: .{node.attr} is forbidden")
+        elif isinstance(node, ast.Call):
+            func = node.func
+            problem = None
+            if isinstance(func, ast.Name) and func.id == "open":
+                problem = _mode_problem(node.args[1] if len(node.args) > 1 else _keyword(node, "mode"))
+            elif isinstance(func, ast.Attribute) and func.attr == "open":
+                problem = _mode_problem(node.args[0] if node.args else _keyword(node, "mode"))
+            elif isinstance(func, ast.Name) and func.id in ("getattr", "setattr", "delattr", "hasattr"):
+                name = node.args[1] if len(node.args) > 1 else None
+                if not (isinstance(name, ast.Constant) and isinstance(name.value, str)):
+                    problem = f"{func.id}() with a non-literal attribute name"
+                elif name.value in FORBIDDEN_OS_ATTRS | FORBIDDEN_METHODS | FORBIDDEN_DUNDERS:
+                    problem = f"{func.id}(..., {name.value!r}) is forbidden"
+            if problem:
+                found.append(f"{line}: {problem}")
     return found
+# --- end of runtime contract checker ---
 
 
-def _relative(path: str, project_dir: str) -> str | None:
-    """Project-relative path with '/' separators, or None when outside the project."""
-    root = os.path.realpath(project_dir)
-    full = os.path.realpath(path if os.path.isabs(path) else os.path.join(root, path))
+def _inside(full: str, root: str) -> str | None:
     rel = os.path.relpath(full, root)
     if rel == os.curdir or rel == os.pardir or rel.startswith(os.pardir + os.sep):
         return None
     return rel.replace(os.sep, "/")
+
+
+def _relative_forms(path: str, project_dir: str) -> set[str]:
+    """Project-relative forms of a path: lexical and fully resolved (symlinks followed).
+
+    Both are checked, so a protected path that is a symlink to elsewhere, and a path
+    elsewhere that is a symlink into a protected area, are both caught.
+    """
+    lexical_root = os.path.normpath(os.path.abspath(project_dir))
+    real_root = os.path.realpath(project_dir)
+    lexical = os.path.normpath(path if os.path.isabs(path) else os.path.join(lexical_root, path))
+    resolved = os.path.realpath(lexical)
+    forms = {_inside(lexical, lexical_root), _inside(lexical, real_root), _inside(resolved, real_root)}
+    forms.discard(None)
+    return forms
 
 
 def _is_protected(rel: str) -> bool:
@@ -159,14 +227,16 @@ def decide(payload: dict, project_dir: str) -> tuple[int, str]:
     path = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not isinstance(path, str) or not path:
         return 2, f"guard: {tool} call without a file path"
-    rel = _relative(path, project_dir)
-    if rel is None:
-        return 0, ""
-    if _is_protected(rel):
-        return 2, (f"guard: {rel} is protected (.github/, ci/, .claude/, LICENSE). CI, governance and these "
-                   "guardrails change only with a separate owner authorisation, edited by hand.")
-    if rel.startswith(PACKAGE_DIR) and rel.endswith(".py") and tool != "NotebookEdit":
-        problems = package_violations(_resulting_content(tool, tool_input, os.path.join(project_dir, rel)))
+    forms = _relative_forms(path, project_dir)
+    protected = sorted(rel for rel in forms if _is_protected(rel))
+    if protected:
+        return 2, (f"guard: {protected[0]} is protected (.github/, ci/, .claude/, LICENSE). CI, governance and "
+                   "these guardrails change only with a separate owner authorisation, edited by hand.")
+    package = sorted(rel for rel in forms if rel.startswith(PACKAGE_DIR) and rel.endswith(".py"))
+    if package and tool != "NotebookEdit":
+        rel = package[0]
+        absolute = path if os.path.isabs(path) else os.path.join(project_dir, path)
+        problems = contract_violations(_resulting_content(tool, tool_input, absolute))
         if problems:
             return 2, ("guard: the package must stay standard-library only, with no shell, network, dynamic "
                        f"code or writes. In {rel}: " + "; ".join(problems))

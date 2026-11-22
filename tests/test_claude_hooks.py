@@ -80,6 +80,31 @@ class ClaudeGuardTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertBlocked(self.decide("Write", file_path=path, content="x"), "protected")
 
+    def test_blocks_external_alias_into_a_protected_area(self):
+        (self.project / ".github" / "workflows").mkdir(parents=True)
+        outside = Path(self._tmp.name) / "outside"
+        outside.mkdir()
+        os.symlink(self.project / ".github", outside / "gh")
+        self.assertBlocked(self.decide("Write", file_path=str(outside / "gh" / "workflows" / "tests.yml"),
+                                       content="x"), ".github/workflows/tests.yml")
+
+    def test_blocks_protected_path_that_is_a_symlink_to_outside(self):
+        elsewhere = Path(self._tmp.name) / "elsewhere"
+        elsewhere.mkdir()
+        os.symlink(elsewhere, self.project / "ci")
+        (elsewhere / "LICENSE.txt").write_text("x", encoding="utf-8")
+        os.symlink(elsewhere / "LICENSE.txt", self.project / "LICENSE")
+        for rel in ("ci/review_gate.py", "ci/new.py", "LICENSE"):
+            with self.subTest(path=rel):
+                self.assertBlocked(self.decide("Write", file_path=str(self.project / rel), content="x"), "protected")
+
+    def test_package_file_reached_through_a_symlink_is_still_checked(self):
+        outside = Path(self._tmp.name) / "outside"
+        outside.mkdir()
+        os.symlink(self.project / "linux_health_reporter", outside / "pkg")
+        self.assertBlocked(self.decide("Write", file_path=str(outside / "pkg" / "new.py"),
+                                       content="import socket"), "import socket")
+
     def test_allows_ordinary_paths_and_files_outside_the_project(self):
         for path in (str(self.project / "README.md"), str(self.project / "docs" / "governance.md"),
                      str(self.project / "tests" / "test_new.py"), str(self.project / "circle.md"),
@@ -186,8 +211,18 @@ class ClaudeGuardTest(unittest.TestCase):
                 self.assertIn("fail closed", result.stderr)
 
     # Consistency with the CI contract ----------------------------------------------------------
-    def test_rules_match_tests_test_runtime_imports(self):
-        for name in ("ALLOWED_IMPORTS", "FORBIDDEN_NAMES", "FORBIDDEN_OS_ATTRS", "FORBIDDEN_METHODS"):
+    def test_checker_text_is_identical_in_guard_and_ci_test(self):
+        start = "# --- runtime contract checker"
+        end = "# --- end of runtime contract checker ---"
+
+        def block(path):
+            text = path.read_text(encoding="utf-8")
+            self.assertEqual(1, text.count(start), path)
+            self.assertEqual(1, text.count(end), path)
+            return text[text.index(start):text.index(end) + len(end)]
+
+        self.assertEqual(block(ROOT / "tests" / "test_runtime_imports.py"), block(GUARD_PATH))
+        for name in ("ALLOWED_IMPORTS", "FORBIDDEN_NAMES", "FORBIDDEN_OS_ATTRS", "FORBIDDEN_METHODS", "FORBIDDEN_DUNDERS"):
             with self.subTest(rule=name):
                 self.assertEqual(getattr(contract, name), getattr(self.guard, name))
 
@@ -196,8 +231,15 @@ class ClaudeGuardTest(unittest.TestCase):
         entries = settings["hooks"]["PreToolUse"]
         matchers = {tool for entry in entries for tool in entry["matcher"].split("|")}
         self.assertTrue({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"} <= matchers)
-        commands = [hook["command"] for entry in entries for hook in entry["hooks"]]
-        self.assertTrue(all(".claude/hooks/guard.py" in c and "$CLAUDE_PROJECT_DIR" in c for c in commands))
+        hooks = [hook for entry in entries for hook in entry["hooks"]]
+        self.assertTrue(hooks)
+        for hook in hooks:
+            with self.subTest(hook=hook):
+                self.assertEqual("command", hook["type"])
+                self.assertIn("$CLAUDE_PROJECT_DIR", hook["command"])
+                self.assertIn(".claude/hooks/guard.py", hook["command"])
+                self.assertEqual("block", hook.get("onFailure"), "a hook that cannot start or times out must block")
+                self.assertEqual(30, hook.get("timeout"))
 
 
 if __name__ == "__main__":
