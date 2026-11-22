@@ -19,6 +19,13 @@ The JSON schema is described in [docs/schema.md](docs/schema.md).
   supported.
 - `docs/governance.md` and `docs/release-process.md`, including the shared
   identity limits and the residual risks.
+- Local Claude Code guardrails in `.claude/`: a fail-closed PreToolUse guard
+  for protected paths (`.github/`, `ci/`, `.claude/`, `LICENSE`) and for the
+  package contract, and a read-only privacy pre-review subagent. See
+  `docs/engineering-workflow.md`.
+- `tests/test_runtime_imports.py`: the package's standard-library import
+  allowlist and forbidden process, dynamic-code and write APIs, checked with
+  `ast` in CI. `tests/test_claude_hooks.py` tests the guard.
 
 ## [0.2.0] — 2026-11-01
 

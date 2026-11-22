@@ -38,6 +38,16 @@ Independence here means a different reviewing model and a separate review task. 
 
 This workflow is human-in-the-loop. AI-generated output is treated as material to verify, not automatically trusted.
 
+### Local Claude Code guardrails
+
+The repository ships project settings for Claude Code in `.claude/`. They apply only when Claude Code runs in a checkout of this repository.
+
+- **Guard hook** (`.claude/hooks/guard.py`, PreToolUse): blocks edits to `.github/`, `ci/`, `.claude/` and `LICENSE`, which change only with a separate owner authorisation. It also blocks package code that imports outside the standard-library allowlist or calls process, dynamic-code or file-writing APIs. Bash commands that name a protected path together with a writing command are blocked on a best-effort basis. Internal errors block (fail closed).
+- **Package contract in CI** (`tests/test_runtime_imports.py`): the same import allowlist and forbidden APIs, checked with `ast` on every pull request. The hook gives earlier feedback; the test is the enforced control.
+- **Privacy pre-review subagent** (`.claude/agents/privacy-adversarial-reviewer.md`): read-only (`Read`, `Grep`, `Glob`), on a different Claude model from the main session. It runs the step 5 checklist before the external review. It does **not** replace the independent second-model review: it is still a Claude model.
+
+These are guardrails against mistakes, not a security boundary. A hook does not see every way a file can change, and Claude Code settings can be changed by whoever runs it. The controls that bind are the `main` ruleset and the owner review gate ([governance.md](governance.md)).
+
 ## Reproduction
 
 From the project root, run:
