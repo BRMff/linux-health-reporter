@@ -133,7 +133,7 @@ These checks are procedural. They do not remove the race between the check and t
 | RR1 | Non-atomic window: the label or the PR inventory can change between a run's read and its write. A stale `success` lasts until the next successful reconciliation. Observed: a second PR opened on an approved SHA (about 19 s, RG-E15) and a conversion to draft (about 17 s, RG-E18b) | Accepted (`LHR-RG-E15-F1 = ACCEPTED_RESIDUAL_RISK`); revoke via draft; check head uniqueness before merging |
 | RR2 | GitHub documents that *"a required status check must have completed successfully in the chosen repository during the past seven days"*. Whether an existing status expires after seven days is not demonstrated | Activation done on 8 November 2026, less than two days after the first real `success` (6 November, RG-E2). The expiry question stays open |
 | RR3 | Without the trigger, revocation depends on the best-effort schedule: 3 h 51 min observed in RG-E18, no upper bound | Accepted (`LHR-RG-E18-F2 = ACCEPTED_RESIDUAL_RISK`); urgent revocation procedure above |
-| RR4 | After the pre-write, a stale read can make the final decision equal the previous status ("unchanged"), so the "reconciling `<sha7>`" `pending` stays visible until the next run (RG-E10, finding E10-F1). Availability only: the status is `pending`, never `success` | Fixed: the head that got the pre-write always receives its final decision (unit tests U38–U41). Not observed end to end after the fix |
+| RR4 | After the pre-write, a stale read can make the final decision equal the previous status ("unchanged"), so the "reconciling `<sha7>`" `pending` stays visible until the next run (RG-E10, finding E10-F1). Availability only: the status is `pending`, never `success` | Fixed in PR #9: the head that got the pre-write always receives its final decision (unit tests U38–U41). The first run after the merge succeeded, but with no open PR the fixed path was not exercised end to end. Closed: `LHR-RR4 = CLOSED_WITH_NOTES` |
 | RR5 | A `success` on the test merge commit takes precedence over a `failure` on the head (sandbox RG-SB3, finding SB-F1) | Out of scope (deliberate abuse): no workflow writes `review-gate` to merge commits |
 
 ### Required status and the test merge commit
@@ -169,6 +169,22 @@ Each step was a separate owner action, authorised separately.
 5. `review-gate` added as a required status check in the `main protection` ruleset on
    8 November 2026, confirmed by RG-E11.
 6. Merge methods for `main` restricted to `merge` on 11 November 2026.
+
+## GitHub Actions policy
+
+Since 20 November 2026 the repository's Actions permissions require every action to be pinned
+to a full-length commit SHA (`sha_pinning_required: true`; `allowed_actions` stays `all`). A
+workflow that references an action by tag, branch or short SHA fails, as GitHub documents (the
+blocking itself has not been exercised here), so new or updated workflows must use full SHAs, with
+the version in a comment, as the current ones do. Dependabot update proposals are expected to keep
+that format; as of 22 November 2026, no new Dependabot pull request had been opened after the
+policy change.
+
+Dependabot's own jobs are an exception: they use `github/dependabot-action@main` and, as GitHub
+documents, bypass Actions policy checks. The pull requests Dependabot opens run the normal
+workflows and are subject to the policy and to the review gate. Restricting `allowed_actions` to
+selected actions is a possible next step, not applied. The change and its observation are recorded
+in [governance-validation.md](governance-validation.md#actions-policy-sha-pinning-s1).
 
 ## Changing required checks
 
