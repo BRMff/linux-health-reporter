@@ -25,7 +25,8 @@ PACKAGE = Path(__file__).resolve().parent.parent / "linux_health_reporter"
 # --- runtime contract checker: identical text in .claude/hooks/guard.py and tests/test_runtime_imports.py ---
 # Static (ast) check of one package module. It rejects imports outside the standard-library allowlist and
 # the process, dynamic-code, host-identifier and file-writing APIs below, including through `import os as x`,
-# `from os import ...`, getattr() and Path.open(). It is not a proof: code can still misbehave in ways a
+# `from os import ...`, `os` reached through another module (pathlib.os), getattr(), Path.open() and
+# open() calls whose arguments cannot be read statically (*args, **kwargs). It is not a proof: code can still misbehave in ways a
 # syntax check cannot see; the privacy contract itself is tested by tests/test_privacy.py and the
 # collector tests.
 ALLOWED_IMPORTS = frozenset({
@@ -94,6 +95,8 @@ def contract_violations(source: str) -> list[str]:
             module = node.module or ""
             if not _allowed_module(module):
                 found.append(f"{line}: from {module} import is not in the allowlist")
+            elif any(a.name == "os" for a in node.names):
+                found.append(f"{line}: from {module} import os is forbidden (import os directly)")
             elif module.split(".", 1)[0] == "os":
                 found += [f"{line}: from {module} import {a.name} is forbidden" for a in node.names
                           if a.name == "*" or a.name in FORBIDDEN_OS_ATTRS]
@@ -108,7 +111,9 @@ def contract_violations(source: str) -> list[str]:
             base = node.value
             on_os = (isinstance(base, ast.Name) and base.id in os_names) or (
                 isinstance(base, ast.Attribute) and base.attr == "os")
-            if on_os and node.attr in FORBIDDEN_OS_ATTRS:
+            if node.attr == "os":
+                found.append(f"{line}: reaching the os module through another object (.os) is forbidden")
+            elif on_os and node.attr in FORBIDDEN_OS_ATTRS:
                 found.append(f"{line}: os.{node.attr} is forbidden")
             elif node.attr in FORBIDDEN_METHODS:
                 found.append(f"{line}: .{node.attr}() is forbidden (no writes)")
@@ -117,7 +122,12 @@ def contract_violations(source: str) -> list[str]:
         elif isinstance(node, ast.Call):
             func = node.func
             problem = None
-            if isinstance(func, ast.Name) and func.id == "open":
+            is_open = (isinstance(func, ast.Name) and func.id == "open") or (
+                isinstance(func, ast.Attribute) and func.attr == "open")
+            if is_open and (any(isinstance(a, ast.Starred) for a in node.args)
+                            or any(k.arg is None for k in node.keywords)):
+                problem = "open() with *args or **kwargs (mode cannot be checked)"
+            elif isinstance(func, ast.Name) and func.id == "open":
                 problem = _mode_problem(node.args[1] if len(node.args) > 1 else _keyword(node, "mode"))
             elif isinstance(func, ast.Attribute) and func.attr == "open":
                 problem = _mode_problem(node.args[0] if node.args else _keyword(node, "mode"))
@@ -125,7 +135,7 @@ def contract_violations(source: str) -> list[str]:
                 name = node.args[1] if len(node.args) > 1 else None
                 if not (isinstance(name, ast.Constant) and isinstance(name.value, str)):
                     problem = f"{func.id}() with a non-literal attribute name"
-                elif name.value in FORBIDDEN_OS_ATTRS | FORBIDDEN_METHODS | FORBIDDEN_DUNDERS:
+                elif name.value == "os" or name.value in FORBIDDEN_OS_ATTRS | FORBIDDEN_METHODS | FORBIDDEN_DUNDERS:
                     problem = f"{func.id}(..., {name.value!r}) is forbidden"
             if problem:
                 found.append(f"{line}: {problem}")
@@ -180,6 +190,17 @@ BAD_SNIPPETS = (
     "import os\nos.getlogin()",
     "globals()['__builtins__']",
     "().__class__.__subclasses__()",
+    # C2 (CC-AB-C1-R1-F4): os reached through another module
+    "from pathlib import os as runner\nrunner.system('true')",
+    "from pathlib import os",
+    "import pathlib\nrunner = pathlib.os",
+    "import pathlib\ngetattr(pathlib, 'os').system('true')",
+    # C2 (CC-AB-C1-R1-F5): open() arguments that cannot be read statically
+    "open('test.txt', **{'mode': 'w'})",
+    "from pathlib import Path\nPath('test.txt').open(**{'mode': 'w'})",
+    "open(*['test.txt', 'w'])",
+    "from pathlib import Path\nPath('test.txt').open(*['w'])",
+    "options = {}\nopen('/proc/loadavg', **options)",
 )
 # Positive controls: each snippet must be accepted.
 GOOD_SNIPPETS = (
@@ -200,6 +221,8 @@ GOOD_SNIPPETS = (
     "import os.path\nos.path.join('a', 'b')",
     "import os as _os\n_os.statvfs('/')",
     "import os\nresult: os.statvfs_result",
+    "open('/proc/loadavg', encoding='ascii')",
+    "from pathlib import Path\nPath('/proc/uptime').open(mode='r', encoding='ascii')",
 )
 
 
