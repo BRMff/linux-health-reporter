@@ -19,6 +19,10 @@ documents the process, it does not prove it.
 | RG-E1–E19 | This repository, PR #6 (synthetic `docs/gate-validation.md` only, closed without merge) | The review gate on the real `main`, ruleset and workflows |
 | RL-E1–E10 | Replay sandbox `BRMff/lhr-rl-sandbox-20261111` | The release gate. The sandbox replays the real history (same commits, PR #4 as gate introduction) and runs `ci/` and `.github/` byte for byte as in production, **without rulesets** |
 | MERGE-METHODS | This repository | Restricting `main` to merge commits |
+| RR4 | This repository, PR #9 | The reconciler fix for RR4, after merge |
+| CLEANUP C1–C3 | Both sandboxes and this repository | Archiving the sandboxes; deleting the merged branches of PRs #8 and #9 |
+| ACTIONS-POLICY S1 | This repository | Requiring actions to be pinned to a full-length commit SHA |
+| CC-GUARDRAILS | This repository, PR #10; Claude Code on the owner's machine | The local Claude Code guard, the runtime contract test and the privacy pre-review subagent |
 
 The release-gate results show what the gate **detects**. They do not show what the production
 rulesets **prevent**: the sandbox had no rulesets, so that scenarios RL-E9 and RL-E10 could
@@ -81,6 +85,69 @@ other ruleset field changed). Notes: a squash or rebase was not attempted in pro
 repository-wide settings still allow squash and rebase; the rollback was prepared and not used.
 Ratified by the owner on 11 November 2026: `LHR-MERGE-METHODS = CLOSED_WITH_NOTES`.
 
+## RR4 fix
+
+PR #9 (merge `d692af2`, 16 November 2026) makes the reconciler always give the head that got the
+pre-write its final decision (unit tests U38–U41). The first run with the fix (scheduled, about
+4 h 44 min after the merge) completed with `changes: 0; open PR heads: 0`: the new code runs in
+production without error, but with no open pull request the fixed path (pre-write followed by a
+stale read) was not exercised. Ratified by the owner: `LHR-RR4 = CLOSED_WITH_NOTES`.
+
+## Sandbox and branch cleanup
+
+| Step | What happened | Notes |
+|---|---|---|
+| C1 | Replay sandbox `BRMff/lhr-rl-sandbox-20261111` archived, with a description (17 November 2026) | The run started before the independent review of its preparation arrived (same class as RG-E13-GOV-F1). C1-POST-F1: secret scanning push protection changed from enabled to disabled, although no request asked for it |
+| C2 | RG sandbox `BRMff/lhr-rg-sandbox-20261106` archived, with a description (19 November 2026) | C2-POST-F1: the same push-protection change, now observed on two archives without a request asking for it. Probable cause: archiving; not confirmed. Not blocking: both sandboxes are read-only |
+| C3 | Merged branches of PRs #8 and #9 deleted (19 November 2026) | Both PRs stay merged and their heads reachable; `governance/gate-validation` kept; restorable from each PR page |
+
+Ratified by the owner: `LHR-CLEANUP-C1 = CLOSED_WITH_NOTES`, `LHR-CLEANUP-C2 = CLOSED_WITH_NOTES`
+and `LHR-CLEANUP-C3 = CLOSED_WITH_NOTES`.
+
+## Actions policy: SHA pinning (S1)
+
+Before the change, an inventory confirmed that all eight `uses:` references in the five workflows
+are pinned to full-length commit SHAs (ratified: `LHR-ACTIONS-PINNING-P0 =
+PINNING_COMPLETE_WITH_NOTES`, 20 November 2026).
+
+On 20 November 2026 the owner set `sha_pinning_required` to `true` in the repository's Actions
+permissions, in a single update with verification before and after; `enabled` stayed `true` and
+`allowed_actions` stayed `all`. Observation until 22 November 2026:
+
+| Criterion | Result |
+|---|---|
+| Scheduled `review-gate` runs | 9/9 success |
+| Scheduled `release-audit` runs | 3/3 success |
+| `tests.yml` (including `setup-python`) | Success on PR #10 and on the following push to `main`; observed from normal runs, without a manual dispatch |
+| Dependabot version updates | Both weekly runs (`github_actions`, `pip`) success |
+| Policy errors in logs and annotations | 0, with every run, job, log and annotation page read |
+
+Dependabot's own jobs download `github/dependabot-action@main`, a branch reference, and still
+ran: GitHub documents that Dependabot jobs bypass Actions policy checks, and this confirms it in
+production for this setting.
+
+Limits: the release gate was not exercised (no tag); the Dependency Graph job did not run (no
+manifest change); no deliberately unpinned action was run, so the blocking itself was not
+observed; the agent cannot read the Actions permissions, so the final state rests on the owner's
+before and after records. The next step (S2, `allowed_actions: selected`) is not applied.
+Ratified by the owner on 22 November 2026: `LHR-ACTIONS-POLICY-S1 = CLOSED_WITH_NOTES`.
+
+## Claude Code guardrails (PR #10)
+
+PR #10 (merge `de106db`, 22 November 2026; tree identical to the reviewed head `e1645c1`) adds the
+guardrails described in [engineering-workflow.md](engineering-workflow.md#local-claude-code-guardrails).
+The candidate went through three review rounds (two holds, then PASS_WITH_NOTES); the reviewer's
+probes found bypasses of the static checker (an `os` alias, `from os import`, `Path.open()`, `os`
+through `pathlib`, `open(**kwargs)`), which were fixed and turned into negative controls. CI passed
+on Python 3.10–3.14.
+
+Live check after the merge, on a fresh clone with Claude Code 2.1.330 (run by the owner): an edit
+to `.github/workflows/tests.yml` was blocked; adding `import socket` to the package was blocked; an
+edit to `README.md` was allowed (and reverted); the privacy subagent was recognised with its
+read-only tools. Notes: the subagent was recognised but not yet invoked; `/agents` no longer
+exists in that version; in auto mode, Bash commands that the guard allows run without
+confirmation. Ratified by the owner on 22 November 2026: `LHR-CCSETUP-AB = CLOSED_WITH_NOTES`.
+
 ## Accepted residual risks
 
 | ID | Decision | Summary |
@@ -108,6 +175,21 @@ Packages kept by the owner outside the repository (SHA256 of each ZIP):
 | RL-E F3 | `c86315d6afcae4184fcf81f2419aef6e1e2f81536d4bbdfecc30d33980cbd5b4` |
 | MERGE-METHODS preparation (C1) | `60a06f35982addde1c8e4f224a0ea870c4bd40fd22df81cc56840bda9b63d70d` |
 | MERGE-METHODS applied | `765abddf108aa679068fd5e2067f145faa4448154304fb592b7acb7e216f9848` |
+| RR4 preparation | `9441dd398091ca0770e7beb5581d4e6d4e6a2dab64fd06765f3495ac178cd254` |
+| RR4 first run after merge | `acd3f51f2d48e623ce207de31dcda626b83c01b43aeec47b29015124dfcf81c9` |
+| Cleanup preparation | `d2bdad949b37a5c815a8dcc3a4d5896b2e4a0372c30ae44a54ee9b164c8f70e6` |
+| Cleanup C1 package run (C1a) | `5e679c3c3255a36c4db8dd2e1fc17d057a410ac3926c23d7148498bc208c98be` |
+| Cleanup C1 archived | `d21341bfe41b46a79e2e655a9509d0b991528052a4714cb72e62478352e11503` |
+| Cleanup C2/C3 preparation | `0d70a0ac907964ba4db4d466186c914f08ba1f86f1af77b28abdc813219613fd` |
+| Cleanup C2 archived | `1c4e790bf0da0dd2a81ad785a242064f6fc5d426c72e5336126b9da4ea9aabcc` |
+| Cleanup C3 package run (C3a) | `e5eb312f99abae1d72dcf7ae8f4174158dde4872b21a057708000b3f8ce861f9` |
+| Cleanup C3 deleted | `4076188d0111e50f6358eff3bee78222436070a32ebf212de17d338e4b5c5fc0` |
+| Actions pinning inventory | `c934819a066e52b8a2ec82bcac953b00e3c897137c49f8270355c80ce837e6d5` |
+| Actions policy S1 preparation (C2, run) | `8b85652babdb6f182fe0cc05920bcd98980b46e822a750a043c67bb861c92e46` |
+| Actions policy S1 observation | `e87f443a20b906aad015f23adb753d097e53632aef6d82ee5457aa2b88353e24` |
+| Actions policy S1 observation, addendum C4 | `d7f26a1358afa430babbcaf33f299a36fd9ba39b99acd6379e2876bfdfca4cc7` |
+| Claude Code guardrails candidate (C2, approved) | `6c287215d6f2f59f5957bda9c4ab43fa0cee20b2ae374aa3a09965cb036a33a8` |
+| Claude Code guardrails after merge | `e2c064dbe2d8f0288e170d375af159e1edb40593f3c3ecb7ec930e94dc80cf92` |
 
 The other scenarios (RG-SB1–SB4, RG-E1–E12, RG-E14, RG-E16, RG-E17b, RG-E19) were reviewed
 from JSON evidence delivered per scenario rather than as packages.

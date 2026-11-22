@@ -10,8 +10,8 @@ The JSON schema is described in [docs/schema.md](docs/schema.md).
   reconciler (`review-gate`, from `main`) that maintains the commit status
   `review-gate` on the head of every open pull request, based on the owner's
   `review:passed` label. It is SHA-bound, never shares an approval between
-  pull requests, and fails closed on incomplete API data. It is not yet a
-  required check: activation is a separate owner step.
+  pull requests, and fails closed on incomplete API data. Required in the
+  `main` ruleset since 8 November 2026.
 - Release gate: a `workflow_dispatch` preflight that records
   `release-preflight/<tag>` evidence, a post-tag verification, and a daily
   `release-audit` of every `v*` tag. Pre-gate history is fixed by pinned
@@ -28,6 +28,16 @@ The JSON schema is described in [docs/schema.md](docs/schema.md).
   APIs (also through aliases, `from os import`, `getattr()` and
   `Path.open()`), checked with `ast` in CI. `tests/test_claude_hooks.py` tests
   the guard and that both copies of the checker are identical.
+- `docs/governance-validation.md`: how the review gate, the release gate and
+  the later governance changes were validated, with the accepted limits and
+  the evidence package hashes.
+
+### Changed (repository governance; the package is unchanged)
+- `main` accepts merge commits only (ruleset, 11 November 2026).
+- The reconciler always gives the head that got the pre-write its final
+  decision (RR4, PR #9).
+- The repository's Actions permissions require full-length commit SHAs
+  (20 November 2026); Dependabot's own jobs are exempt, as GitHub documents.
 
 ## [0.2.0] — 2026-11-01
 
