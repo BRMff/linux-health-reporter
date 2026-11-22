@@ -48,7 +48,7 @@ The repository ships project settings for Claude Code in `.claude/`. They apply 
 - **What the static check does not prove:** it inspects syntax, not behaviour. It is not evidence that the package never writes, uses the network or collects identifiers; those guarantees rest on the privacy and collector tests and on review.
 - **Privacy pre-review subagent** (`.claude/agents/privacy-adversarial-reviewer.md`): read-only (`Read`, `Grep`, `Glob`), on a different Claude model from the main session. It runs the step 5 checklist before the external review. It does **not** replace the independent second-model review: it is still a Claude model.
 
-Validated after merge with Claude Code 2.1.330 (see [governance-validation.md](governance-validation.md#claude-code-guardrails-pr-10)). Two practical notes from that check: in auto mode, Bash commands that the guard allows run without asking; and `/agents` no longer exists in that version, so ask Claude Code which project subagents it has.
+Validated after merge with Claude Code 2.1.330 (see [governance-validation.md](governance-validation.md#claude-code-guardrails-pr-10)). Two notes observed in the owner's session during that check (not a general guarantee for every installation of that version): in auto mode, Bash commands that the guard allowed ran without asking; and the `/agents` command was reported as removed, so the subagent was confirmed by asking Claude Code which project subagents it had.
 
 These are guardrails against mistakes, not a security boundary. A hook does not see every way a file can change, and Claude Code settings can be changed by whoever runs it. The controls that bind are the `main` ruleset and the owner review gate ([governance.md](governance.md)).
 

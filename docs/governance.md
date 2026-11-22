@@ -177,7 +177,8 @@ to a full-length commit SHA (`sha_pinning_required: true`; `allowed_actions` sta
 workflow that references an action by tag, branch or short SHA fails, as GitHub documents (the
 blocking itself has not been exercised here), so new or updated workflows must use full SHAs, with
 the version in a comment, as the current ones do. Dependabot update proposals are expected to keep
-that format; none has been opened since the setting changed.
+that format; as of 22 November 2026, no new Dependabot pull request had been opened after the
+policy change.
 
 Dependabot's own jobs are an exception: they use `github/dependabot-action@main` and, as GitHub
 documents, bypass Actions policy checks. The pull requests Dependabot opens run the normal

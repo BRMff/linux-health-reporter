@@ -144,8 +144,8 @@ on Python 3.10–3.14.
 Live check after the merge, on a fresh clone with Claude Code 2.1.330 (run by the owner): an edit
 to `.github/workflows/tests.yml` was blocked; adding `import socket` to the package was blocked; an
 edit to `README.md` was allowed (and reverted); the privacy subagent was recognised with its
-read-only tools. Notes: the subagent was recognised but not yet invoked; `/agents` no longer
-exists in that version; in auto mode, Bash commands that the guard allows run without
+read-only tools. Notes, as observed in that session: the subagent was recognised but not yet invoked; `/agents`
+was reported as removed; in auto mode, a Bash command that the guard allowed ran without
 confirmation. Ratified by the owner on 22 November 2026: `LHR-CCSETUP-AB = CLOSED_WITH_NOTES`.
 
 ## Accepted residual risks
